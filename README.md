@@ -1,2 +1,2 @@
-# Micromobility-Insight-Engine
-An e-bicycle adoption RAG system based on up-to-date policy &amp; incentive programs, infrastructure &amp; city case studies, equity &amp; barriers research, advocacy &amp; best practices resources. Cities need actionable and equitable guidance from recent data on real examples and this repository explores how a RAG system can pedal the way.
+# Cycle Compass (Greater Manchester)
+Proof-of-concept web app that personalises the TfGM Bee Network experience. Users complete a short questionnaire and receive two LLM-generated reports: an overview of relevant active travel options, then specific, actionable recommendations with links to official resources. Built with RAG. Not affiliated with TfGM.
