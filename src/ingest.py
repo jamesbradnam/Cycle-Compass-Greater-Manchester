@@ -18,6 +18,7 @@ from langchain_text_splitters import RecursiveCharacterTextSplitter
 from openai import APIConnectionError, RateLimitError
 
 from . import config
+from .validation import validate_manifest_df
 
 _ENCODING = tiktoken.get_encoding("cl100k_base")
 
@@ -74,15 +75,8 @@ def build_metadata(row: pd.Series) -> dict:
     return metadata
 
 
-def _fetch_clean_text(url: str) -> str:
-    response = requests.get(
-        url,
-        timeout=config.REQUEST_TIMEOUT,
-        headers={"User-Agent": os.environ["USER_AGENT"]},
-    )
-    response.raise_for_status()
-
-    soup = BeautifulSoup(response.text, "lxml")
+def _clean_html(html: str) -> str:
+    soup = BeautifulSoup(html, "lxml")
     for tag in soup.find_all(STRIP_TAGS):
         tag.decompose()
 
@@ -91,8 +85,24 @@ def _fetch_clean_text(url: str) -> str:
     return "\n".join(lines)
 
 
+def _fetch_clean_text(url: str) -> str:
+    response = requests.get(
+        url,
+        timeout=config.REQUEST_TIMEOUT,
+        headers={"User-Agent": os.environ["USER_AGENT"]},
+    )
+    response.raise_for_status()
+    return _clean_html(response.text)
+
+
 def load_documents() -> list[Document]:
     df = pd.read_csv(config.MANIFEST_PATH)
+
+    problems = validate_manifest_df(df)
+    if problems:
+        formatted = "\n".join(f"  - {p}" for p in problems)
+        raise ValueError(f"manifest.csv failed validation:\n{formatted}")
+
     df = df[df["status"] == "active"]
 
     documents: list[Document] = []
