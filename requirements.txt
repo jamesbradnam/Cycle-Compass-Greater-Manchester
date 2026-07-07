@@ -1,0 +1,10 @@
+langchain
+langchain-openai
+langchain-chroma
+chromadb
+beautifulsoup4
+lxml
+requests
+pandas
+python-dotenv
+tiktoken
