@@ -8,3 +8,5 @@ requests
 pandas
 python-dotenv
 tiktoken
+fastapi
+uvicorn[standard]
