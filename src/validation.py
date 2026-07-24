@@ -82,8 +82,14 @@ def validate_manifest_df(df: pd.DataFrame) -> list[str]:
     return problems
 
 
-def validate_profile(profile: dict) -> None:
-    """Raise ValueError with a clear message if a profile dict is malformed."""
+def validate_profile(profile: dict, *, require_all: bool = True) -> None:
+    """Raise ValueError with a clear message if a profile dict is malformed.
+
+    Stage-1 (overview) profiles only have persona/purpose/borough/
+    accessibility_relevant - pass require_all=False to skip checking the
+    stage-2 fields (budget_band/e_bike_focused/employment_required) that
+    genuinely aren't known yet at that point in the questionnaire.
+    """
     errors: list[str] = []
 
     if profile.get("persona") not in VALID_PERSONAS:
@@ -96,16 +102,19 @@ def validate_profile(profile: dict) -> None:
     if unknown_purposes:
         errors.append(f"unknown purpose(s): {unknown_purposes}")
 
-    if profile.get("budget_band") not in VALID_BUDGETS:
-        errors.append(f"unknown budget_band: {profile.get('budget_band')!r}")
-
     borough = profile.get("borough")
     if borough is not None and borough not in BOROUGHS:
         errors.append(f"unknown borough: {borough!r}")
 
-    for key in ("accessibility_relevant", "e_bike_focused", "employment_required"):
-        if not isinstance(profile.get(key), bool):
-            errors.append(f"{key} must be a bool")
+    if not isinstance(profile.get("accessibility_relevant"), bool):
+        errors.append("accessibility_relevant must be a bool")
+
+    if require_all:
+        if profile.get("budget_band") not in VALID_BUDGETS:
+            errors.append(f"unknown budget_band: {profile.get('budget_band')!r}")
+        for key in ("e_bike_focused", "employment_required"):
+            if not isinstance(profile.get(key), bool):
+                errors.append(f"{key} must be a bool")
 
     if errors:
         raise ValueError("Invalid profile: " + "; ".join(errors))

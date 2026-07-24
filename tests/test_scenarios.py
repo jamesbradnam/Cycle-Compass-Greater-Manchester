@@ -12,7 +12,7 @@ import pandas as pd
 import pytest
 
 from src import config
-from src.rag import DISCLAIMER, generate_reports
+from src.rag import DISCLAIMER, generate_overview, generate_recommendations
 
 pytestmark = pytest.mark.live
 
@@ -81,13 +81,27 @@ SCENARIOS = [
     ids=[f"{p['persona']}-{p['borough'] or 'gm'}-employed={p['employment_required']}" for p in SCENARIOS],
 )
 def test_scenario_report_is_well_formed(profile):
-    bundle = generate_reports(profile)
+    # Stage 1: only what's known after the first 4 questions.
+    overview_profile = {
+        "persona": profile["persona"],
+        "purpose": profile["purpose"],
+        "borough": profile["borough"],
+        "accessibility_relevant": profile["accessibility_relevant"],
+    }
+    overview = generate_overview(overview_profile)
 
     # Guaranteed by code (see rag.py), asserted here as a regression guard.
-    assert bundle.disclaimer == DISCLAIMER
+    assert overview["disclaimer"] == DISCLAIMER
+    assert not re.search(r"https?://", overview["overview"]), (
+        "overview should not include raw links - those belong in the recommendations report"
+    )
 
-    recs = bundle.recommendations.recommendations
-    assert recs or bundle.recommendations.note, "no recommendations and no honest note"
+    # Stage 2: all 7 answers known.
+    recommendations = generate_recommendations(profile)
+    assert recommendations["disclaimer"] == DISCLAIMER
+
+    recs = recommendations["recommendations"]
+    assert recs or recommendations["note"], "no recommendations and no honest note"
 
     urls = [r.url for r in recs]
     assert len(urls) == len(set(urls)), f"duplicate URLs cited: {urls}"
@@ -98,7 +112,3 @@ def test_scenario_report_is_well_formed(profile):
             assert url not in EMPLOYMENT_REQUIRED_URLS, (
                 f"recommended an employment-required source for a non-employed profile: {url}"
             )
-
-    assert not re.search(r"https?://", bundle.overview), (
-        "overview should not include raw links - those belong in the recommendations report"
-    )

@@ -29,6 +29,23 @@ class Recommendation(BaseModel):
 
 
 class RecommendationsReport(BaseModel):
+    # Deliberately declared before `recommendations` and never surfaced to the
+    # user: with structured/tool-call output there's no scratchpad for the
+    # model to reason in before emitting its answer, so "think step by step"
+    # instructions in the prompt have nothing to act on. Forcing this field
+    # first makes the model actually write its grouping analysis before it
+    # commits to a final list, which is what makes the grouping rule in
+    # RECOMMENDATION_INTEGRITY_NOTE actually take effect.
+    grouping_analysis: str = Field(
+        description=(
+            "Brief working notes, not shown to the user - a few short bullet "
+            "points, not full sentences and not an essay. Among the sources "
+            "you are seriously considering recommending (not all sources in "
+            "the context), note any that describe the same underlying "
+            "scheme/service under a different url or title, and which single "
+            "one you will keep for each such group. Keep this under ~40 words."
+        )
+    )
     recommendations: list[Recommendation] = Field(default_factory=list)
     note: str | None = Field(
         default=None,
@@ -49,12 +66,6 @@ class RecommendationsReport(BaseModel):
             deduped.append(rec)
         self.recommendations = deduped
         return self
-
-
-class ReportBundle(BaseModel):
-    overview: str
-    recommendations: RecommendationsReport
-    disclaimer: str
 
 
 REGION_NOTE = (
@@ -82,17 +93,49 @@ PERSONA_TONE_NOTE = (
     "already cycle sometimes - focus on practical logistics and leveling up."
 )
 
+PROFILE_FIT_NOTE = (
+    "Each source is tagged with its category, budget band, and whether it's "
+    "accessibility-relevant or e-bike-focused - use these tags, not just the "
+    "prose, to judge fit. Weigh every fact in the user profile: if they have "
+    "accessibility needs, prioritize and clearly call out accessibility-"
+    "relevant sources; if they're interested in e-bikes, prioritize e-bike-"
+    "focused sources where genuinely available; respect their stated budget "
+    "- don't lead with an option that clearly needs more money than they "
+    "indicated when a similarly-suitable lower-cost option exists in the "
+    "context."
+)
+
 RECOMMENDATION_INTEGRITY_NOTE = (
-    "Each recommendation's name and url must correspond to exactly one "
-    "source from the context, taken verbatim - never invent a url that "
-    "doesn't appear in the context. Before answering, count how many "
-    "recommendations you plan to give and how many distinct sources you have "
-    "- if you have fewer distinct, eligible sources than recommendations you "
-    "want to write, write fewer recommendations instead of citing the same "
-    "url twice. Each url must appear in AT MOST ONE recommendation, with no "
-    "exceptions. Only state concrete numbers (percentages, prices, "
-    "discounts) if they appear verbatim in the context - otherwise describe "
-    "the benefit qualitatively without inventing a figure."
+    "Before writing your answer, work through this process silently:\n"
+    "STEP 1: From the context, list every source that is genuinely eligible "
+    "and well-suited to this person.\n"
+    "STEP 2: Group sources that describe the SAME underlying scheme, "
+    "service, or offer - even when they have different urls and different "
+    "titles. A common pattern in this context: one source is TfGM's own "
+    "introduction/overview page for a scheme, and another source is a "
+    "partner site's booking, registration, or FAQ page for that exact same "
+    "scheme (for example, a page titled 'Borrow an e-bike' and a separate "
+    "page titled 'Borrow an e-bike booking' are THE SAME scheme, described "
+    "twice - not two different options). Whenever you notice two sources "
+    "whose titles or content both refer to the same named scheme, they are "
+    "one group, not two recommendations.\n"
+    "STEP 3: Within each group from step 2, keep only the single most "
+    "directly actionable source (the one that actually lets the person "
+    "book, register, or get started) and discard every other source in "
+    "that group - do not list a discarded source as a separate "
+    "recommendation later.\n"
+    "STEP 4: From what remains after grouping, select up to 3 of the most "
+    "distinct, well-suited options, preferring variety (different "
+    "categories, or different ways of getting started) over similar "
+    "options. Never pad the list to reach 3: recommending 1 or 2 excellent, "
+    "clearly different options is always better than including a weak fit "
+    "or a near-duplicate just to hit a count.\n"
+    "STEP 5: Each recommendation's name and url must correspond to exactly "
+    "one source from the context, taken verbatim - never invent a url that "
+    "doesn't appear in the context, and never cite the same url twice. "
+    "Only state concrete numbers (percentages, prices, discounts) if they "
+    "appear verbatim in the context - otherwise describe the benefit "
+    "qualitatively without inventing a figure."
 )
 
 OVERVIEW_PROMPT = ChatPromptTemplate.from_messages(
@@ -101,12 +144,18 @@ OVERVIEW_PROMPT = ChatPromptTemplate.from_messages(
             "system",
             "You are Cycle Compass, a friendly assistant that helps people in Greater "
             "Manchester get into cycling via the TfGM Bee Network. Using ONLY the "
-            "provided context, write a plain-English OVERVIEW of the active travel "
-            "options relevant to this person's profile. " + REGION_NOTE + " "
-            + ELIGIBILITY_NOTE + " " + PERSONA_TONE_NOTE + " Do not invent facts, "
-            "schemes, or links that aren't in the context. Keep it to 3-5 short "
-            "paragraphs and do not include links yet - those come in a separate "
-            "report.",
+            "provided context, write a plain-English OVERVIEW that feels personally "
+            "written for this person. Open by briefly acknowledging their specific "
+            "situation - why they want to cycle (their stated purpose), and any "
+            "budget, accessibility, or e-bike preference they've already given you - "
+            "rather than a generic greeting. Then describe the kinds of active "
+            "travel options genuinely available to them, grounded in the context. "
+            + REGION_NOTE + " " + ELIGIBILITY_NOTE + " " + PROFILE_FIT_NOTE + " "
+            + PERSONA_TONE_NOTE + " Do not invent facts, schemes, or links that "
+            "aren't in the context, and do not include links yet - those come in a "
+            "separate report. Close with one short, encouraging line tied "
+            "specifically to their stated purpose for cycling, not a generic "
+            "sign-off. Keep the whole thing to 3-5 short paragraphs.",
         ),
         (
             "human",
@@ -122,10 +171,10 @@ RECOMMENDATIONS_PROMPT = ChatPromptTemplate.from_messages(
             "You are Cycle Compass, a friendly assistant that helps people in Greater "
             "Manchester get into cycling via the TfGM Bee Network. Using ONLY the "
             "provided context, produce SPECIFIC, ACTIONABLE recommendations for this "
-            "person. " + REGION_NOTE + " " + ELIGIBILITY_NOTE + " "
-            + RECOMMENDATION_INTEGRITY_NOTE + " " + PERSONA_TONE_NOTE + " If nothing "
-            "in the context fits this person well, leave recommendations empty and "
-            "explain why in the note field instead of guessing.",
+            "person. " + REGION_NOTE + " " + ELIGIBILITY_NOTE + " " + PROFILE_FIT_NOTE
+            + " " + RECOMMENDATION_INTEGRITY_NOTE + " " + PERSONA_TONE_NOTE + " If "
+            "nothing in the context fits this person well, leave recommendations "
+            "empty and explain why in the note field instead of guessing.",
         ),
         (
             "human",
@@ -154,10 +203,13 @@ def _region_filter(borough: str | None) -> dict:
 
 def _retrieval_filter(profile: dict) -> dict:
     clauses = [_region_filter(profile.get("borough"))]
-    if not profile.get("employment_required"):
+    if profile.get("employment_required") is False:
         # Employer-mediated schemes (e.g. Cycle to Work salary sacrifice) are
         # genuinely inaccessible without a qualifying employer, so this is a
-        # hard exclusion rather than a soft/semantic preference.
+        # hard exclusion rather than a soft/semantic preference. Only applies
+        # once we know for certain the user isn't employed - if the field is
+        # simply absent (not asked yet, at overview-time), "unknown" must not
+        # be treated the same as "known not employed".
         clauses.append({"employment_required": False})
     if len(clauses) == 1:
         return clauses[0]
@@ -173,13 +225,24 @@ def _region_tags(metadata: dict) -> str:
     return ", ".join(sorted(tags)) or "unspecified"
 
 
+def _yes_no(value: object) -> str:
+    return "yes" if value else "no"
+
+
 def _format_docs(docs: list[Document]) -> str:
     blocks = []
     for doc in docs:
         title = doc.metadata.get("title", "Untitled")
         url = doc.metadata.get("url", "")
-        region = _region_tags(doc.metadata)
-        blocks.append(f"Source: {title} ({url})\nRegion(s): {region}\n{doc.page_content}")
+        meta = (
+            f"Category: {doc.metadata.get('corpus_category', 'unspecified')} | "
+            f"Budget: {doc.metadata.get('budget_band', 'unspecified')} | "
+            f"Accessibility-relevant: {_yes_no(doc.metadata.get('accessibility_relevant'))} | "
+            f"E-bike-focused: {_yes_no(doc.metadata.get('e_bike_focused'))} | "
+            f"Employment required: {_yes_no(doc.metadata.get('employment_required'))} | "
+            f"Region(s): {_region_tags(doc.metadata)}"
+        )
+        blocks.append(f"Source: {title} ({url})\n{meta}\n{doc.page_content}")
     return "\n\n---\n\n".join(blocks)
 
 
@@ -193,42 +256,78 @@ def _profile_to_query(profile: dict) -> str:
     parts = [
         f"persona: {profile['persona']}",
         f"purpose: {', '.join(profile['purpose'])}",
-        f"budget: {profile['budget_band']}",
         f"region: {region_desc}",
-        "has accessibility needs"
-        if profile.get("accessibility_relevant")
-        else "no accessibility needs stated",
-        "interested in e-bikes"
-        if profile.get("e_bike_focused")
-        else "not specifically interested in e-bikes",
-        "employed - workplace cycling schemes are relevant"
-        if profile.get("employment_required")
-        else "not employed - do not suggest employer/workplace schemes",
     ]
+    # Each of these is only mentioned if the question has actually been asked
+    # (key present) - at overview-time (stage 1 only), budget/e-bike/
+    # employment are genuinely unknown, not "false", and must stay silent
+    # rather than be misrepresented as a negative answer.
+    if "accessibility_relevant" in profile:
+        parts.append(
+            "has accessibility needs"
+            if profile["accessibility_relevant"]
+            else "no accessibility needs stated"
+        )
+    if "budget_band" in profile:
+        parts.append(f"budget: {profile['budget_band']}")
+    if "e_bike_focused" in profile:
+        parts.append(
+            "interested in e-bikes"
+            if profile["e_bike_focused"]
+            else "not specifically interested in e-bikes"
+        )
+    if "employment_required" in profile:
+        parts.append(
+            "employed - workplace cycling schemes are relevant"
+            if profile["employment_required"]
+            else "not employed - do not suggest employer/workplace schemes"
+        )
     return "; ".join(parts)
 
 
-def generate_reports(profile: dict, k: int = config.RETRIEVER_K) -> ReportBundle:
-    validate_profile(profile)
-
+def _retrieve(profile: dict, k: int) -> tuple[str, str]:
     vectorstore = load_vectorstore()
     retriever = vectorstore.as_retriever(
         search_kwargs={"k": k, "filter": _retrieval_filter(profile)}
     )
-
     query = _profile_to_query(profile)
     docs = retriever.invoke(query)
-    context = _format_docs(docs)
-    inputs = {"profile": query, "context": context}
+    return query, _format_docs(docs)
+
+
+def generate_overview(profile: dict, k: int = config.RETRIEVER_K) -> dict:
+    """Stage 1: persona/purpose/borough/accessibility_relevant only."""
+    validate_profile(profile, require_all=False)
+    query, context = _retrieve(profile, k)
 
     overview_chain = OVERVIEW_PROMPT | ChatOpenAI(
-        model=config.CHAT_MODEL, temperature=0.3
+        model=config.CHAT_MODEL,
+        temperature=0.3,
+        timeout=config.LLM_TIMEOUT_SECONDS,
+        max_tokens=config.OVERVIEW_MAX_TOKENS,
     ) | StrOutputParser()
+    overview = overview_chain.invoke({"profile": query, "context": context})
+
+    return {"overview": overview, "disclaimer": DISCLAIMER}
+
+
+def generate_recommendations(profile: dict, k: int = config.RETRIEVER_K) -> dict:
+    """Stage 2: all 7 profile fields must be present."""
+    validate_profile(profile, require_all=True)
+    query, context = _retrieve(profile, k)
+
     recommendations_chain = RECOMMENDATIONS_PROMPT | ChatOpenAI(
-        model=config.CHAT_MODEL, temperature=0.1
+        model=config.CHAT_MODEL,
+        temperature=0.1,
+        timeout=config.LLM_TIMEOUT_SECONDS,
+        max_tokens=config.RECOMMENDATIONS_MAX_TOKENS,
     ).with_structured_output(RecommendationsReport)
+    report: RecommendationsReport = recommendations_chain.invoke(
+        {"profile": query, "context": context}
+    )
 
-    overview = overview_chain.invoke(inputs)
-    recommendations = recommendations_chain.invoke(inputs)
-
-    return ReportBundle(overview=overview, recommendations=recommendations, disclaimer=DISCLAIMER)
+    return {
+        "recommendations": report.recommendations,
+        "note": report.note,
+        "disclaimer": DISCLAIMER,
+    }
